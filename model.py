@@ -83,9 +83,17 @@ class linearclassifier(object):
 
 class KNNClassifier(object):
 
-    def __init__(self, K=3, method = ''):
+    def __init__(self, K=3, method = None):
         self.k = K
-        self.method = method
+        assert method in ["euclidean ", "manhattan", "cosine"], "Method  Not in ['euclidean' , 'manhattan', 'cosine']"
+
+    
+    def fit(self, X, y ):
+        self.x = X
+        self.y = y
+
+
+def _euclidean(self,X)
 
     
 
