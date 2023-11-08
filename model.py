@@ -1,4 +1,5 @@
 import numpy as np
+from tqdm import tqdm
 
 class linearclassifier(object):
 
@@ -195,8 +196,6 @@ class KDTree(object):
 
 
 
-
-
 class KNN(object):
 
     def __init__(self, K = 3, method = 'euclidean') :
@@ -224,20 +223,156 @@ class KNN(object):
         return nearest, y_pred
 
     def score(self,xtest, ytest):
-        count = 0
-        for x, y in zip(xtest, ytest):
+        y_pred_list = []
+        for x in tqdm(xtest):
             #print(f"score : {np.shape(x)}")
             _,  y_pred = self.predict(x)
-            if y_pred == y:
-                count += 1
+            y_pred_list.append(y_pred)
 
-        acc = count / len(ytest)
+        acc = np.sum(np.array(y_pred_list) == ytest) / len(ytest)
 
-        print(f"The Accuray of Testing Data : {acc :.2%}")
-            
-
+        print(f"The Accuracy of Testing Data : {acc :.2%}")
 
 
 
         
-##################################### KNN ####################################
+##################################### Decision Tree ####################################
+
+class TreeNode(object):
+    def __init__(self, feature_index = None, threshold = None, right = None, left = None, info_gain = None, value = None):
+        self.feature_index = feature_index
+        self.threshold = threshold
+        self.right = right
+        self.left = left
+        self.value = value
+
+
+
+
+class DecisionTree(object):
+    def __init__(self, max_depth = 10, min_sample_spilt = None) -> None:
+        self.tree = None
+        self.max_depth = max_depth
+        self.min_sample_spilt = min_sample_spilt
+
+
+    def parameters(self):
+
+        params = {"Max_depth" : self.max_depth,
+                  "Min_Sample_Split" : self.min_sample_spilt}
+        
+        return params
+    
+
+
+    def fit(self, X, y):
+        
+        self.tree = self._build_tree(X, y, depth = 0)
+
+    def _build_tree(self, X, y, depth):
+        
+        n_sample, n_feature = np.shape(X)
+
+        if self.min_sample_spilt is not None:
+            if depth == self.max_depth or n_sample < self.min_sample_spilt:
+                most_label = np.argmax(np.bincount(y))            
+                return TreeNode(value = most_label)
+            
+        else:
+            if depth == self.max_depth:
+                most_label = np.argmax(np.bincount(y))            
+                return TreeNode(value = most_label)
+            
+
+        best_feature_index, best_threshold = self.get_best_feature(X, y)
+
+        if best_feature_index is None:
+            most_label = np.argmax(np.bincount(y))            
+            return TreeNode(value = most_label)
+        
+        #print(np.sh(X[best_index_set[0]]))
+
+        right_indices = X[:, best_feature_index] <= best_threshold
+        left_indices = ~right_indices
+        
+        right = self._build_tree(X[right_indices], y[right_indices], depth+1)
+        left = self._build_tree(X[left_indices], y[left_indices], depth+1)
+        
+        return TreeNode(feature_index=best_feature_index, threshold=best_threshold, right=right, left=left)
+    
+
+    def _gini(self, y):
+
+        if len(y) == 0:
+            return 0.0
+        
+        p = np.bincount(y) / len(y)
+
+        return 1 - np.sum(p **2)
+    
+
+    
+    def get_best_feature(self, X, y):
+        
+        best_gain = 0
+        best_feature_index = None
+        best_threshold = None
+
+        n_feature = X.shape[1]
+        
+        #整體
+        currentscore = self._gini(y)
+
+
+        for col_index in range(n_feature):
+
+            feature_values = np.unique(X[:,col_index])
+
+            for threshold in feature_values:
+
+                right_indices = X[:, col_index] <= threshold
+                left_indices = ~right_indices
+                
+                if self.min_sample_spilt is not None:
+                    if len(right_indices) < self.min_sample_spilt or len(left_indices) < self.min_sample_spilt:
+                        continue
+
+                p = float(len(right_indices)) / len(y)
+
+                gain = currentscore - p * self._gini(y[right_indices]) - (1-p) * self._gini(y[left_indices])
+
+                if gain > best_gain:
+
+                    best_feature_index = col_index
+                    best_threshold = threshold
+
+        return best_feature_index, best_threshold
+
+
+    def predict(self, X):
+
+        predictions = [self._predict(x, self.tree) for x in X]
+
+        return predictions
+    
+    def _predict(self, x, node):
+
+        if node.value is not None:
+            return node.value
+        
+        if x[node.feature_index] <= node.threshold:
+            return self._predict(x, node.right)
+        else:
+            return self._predict(x, node.left)
+        
+
+    def score(self, xtest, ytest):
+
+        predictions = self.predict(xtest)
+
+        acc = np.sum(predictions == ytest) / len(ytest)
+
+        print(f"The Accuracy of Test Data : {acc : .2%}")
+
+    
+ 
