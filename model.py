@@ -1,5 +1,6 @@
 import numpy as np
 from tqdm import tqdm
+import statistics
 
 class linearclassifier(object):
 
@@ -8,7 +9,7 @@ class linearclassifier(object):
         self.b = None               # Bisd
         self.lr = lr                # Learning Rate
         self.epochs = epochs        # Training Iteration
-        self.history_loss = []      # Store Loss in list 
+         
 
     
     # Access model parameters
@@ -35,10 +36,17 @@ class linearclassifier(object):
         '''
         output = np.dot(x, self.w) + self.b
         y_pred = self._sigmoid(output)
-        y_pred_classes = np.array([1 if i > 0.5 else 0 for i in y_pred]
-)
+        y_pred_classes = [1 if i > 0.5 else 0 for i in y_pred]
 
         return y_pred_classes
+    
+    def score(self, Xtest, ytest):
+        
+        y_pred_classes = self.predict(Xtest)
+
+        acc = np.sum( y_pred_classes == ytest) / len(ytest)
+
+        return acc
     
 
     def fit(self, X, y):
@@ -54,13 +62,15 @@ class linearclassifier(object):
 
         '''
         n_data, n_features = X.shape
+        #min_loss = float("inf")
+        self.history_loss = []      # Store Loss in list
 
         # initialize parameters
         self.w = np.zeros(n_features)
         self.b = 0
 
         #更新權重
-        for i in range(self.epochs):
+        for i in tqdm(range(self.epochs)):
             
             #predict
             output = np.dot(X, self.w) + self.b
@@ -69,6 +79,8 @@ class linearclassifier(object):
             #Cross Entropy loss
             loss = -(1 / n_data * (np.sum(y * np.log(y_pred) + (1 - y) * np.log(1 - y_pred))))
             self.history_loss.append(loss)
+
+
 
             #gradient descent
             dw = 1 / n_data * np.dot(X.T, (y_pred - y))
@@ -79,7 +91,14 @@ class linearclassifier(object):
             self.w -= self.lr * dw
             self.b -= self.lr * db
 
-            print(f"Epoch[{i + 1}/{self.epochs}], Loss : {loss}")
+            #print(f"Epoch[{i + 1}/{self.epochs}], Loss : {loss}")
+
+
+    def feature_importance(self, n = 10):
+
+        sorted_index = np.argsort(np.abs(self.w))[::-1]
+
+        return sorted_index[:n]
 
 ##################################### KNN ####################################
 
@@ -213,25 +232,29 @@ class KNN(object):
         self.X = X
         self.y = y
         self.kdtree = KDTree(self.X, self.y, self.method)
-        print("Fitting...")
+        #print("Fitting...")
     
     
     def predict(self, X):
         
-        nearest, y_pred = self.kdtree.search(X, self.k)
+        y_preds = []
+        for  row in tqdm(X):
+        
+            _, y_pred = self.kdtree.search(row, self.k)
 
-        return nearest, y_pred
+            y_preds.append(y_pred)
+
+        return y_preds
 
     def score(self,xtest, ytest):
-        y_pred_list = []
-        for x in tqdm(xtest):
-            #print(f"score : {np.shape(x)}")
-            _,  y_pred = self.predict(x)
-            y_pred_list.append(y_pred)
+        
+        y_pred = self.predict(xtest)
 
-        acc = np.sum(np.array(y_pred_list) == ytest) / len(ytest)
+        acc = np.sum(np.array(y_pred) == ytest) / len(ytest)
 
-        print(f"The Accuracy of Testing Data : {acc :.2%}")
+        #print(f"The Accuracy of Testing Data : {acc :.2%}")
+
+        return acc
 
 
 
@@ -244,7 +267,9 @@ class TreeNode(object):
         self.threshold = threshold
         self.right = right
         self.left = left
+        self.info_gain = info_gain
         self.value = value
+        
 
 
 
@@ -268,11 +293,14 @@ class DecisionTree(object):
     def fit(self, X, y):
         
         self.tree = self._build_tree(X, y, depth = 0)
+        self.feature_importance = self._compute_feature_importance(X, y)
 
     def _build_tree(self, X, y, depth):
         
         n_sample, n_feature = np.shape(X)
 
+        #如果深度到達最大深度或結點樣本數小於最小分割數
+        #回傳葉節點
         if self.min_sample_spilt is not None:
             if depth == self.max_depth or n_sample < self.min_sample_spilt:
                 most_label = np.argmax(np.bincount(y))            
@@ -284,14 +312,16 @@ class DecisionTree(object):
                 return TreeNode(value = most_label)
             
 
-        best_feature_index, best_threshold = self.get_best_feature(X, y)
+        #在當前節點選擇最佳分割特徵及分割的數值
+        best_feature_index, best_threshold, best_gain = self.get_best_feature(X, y)
 
+        #如果最佳分割特徵不存在，則回傳葉節點
         if best_feature_index is None:
             most_label = np.argmax(np.bincount(y))            
             return TreeNode(value = most_label)
         
-        #print(np.sh(X[best_index_set[0]]))
-
+        
+        #生成左右子樹
         right_indices = X[:, best_feature_index] <= best_threshold
         left_indices = ~right_indices
         
@@ -302,7 +332,9 @@ class DecisionTree(object):
     
 
     def _gini(self, y):
-
+        '''
+        計算GINI係數
+        '''
         if len(y) == 0:
             return 0.0
         
@@ -313,41 +345,118 @@ class DecisionTree(object):
 
     
     def get_best_feature(self, X, y):
-        
+        """
+        計算該節點所有特徵分割後的GINI係數值
+        如果分割後的Information Gain越大則選擇該特徵及該特徵的取值
+
+        """
         best_gain = 0
         best_feature_index = None
         best_threshold = None
 
         n_feature = X.shape[1]
         
-        #整體
+        #分割前的GINI值
         currentscore = self._gini(y)
 
-
+        #遍歷該節點所有特徵，
         for col_index in range(n_feature):
-
+            
+            #該特徵的所有取值
             feature_values = np.unique(X[:,col_index])
 
-            for threshold in feature_values:
+            #如果連續變數數量大於10，則用十分位數當作分割依據
+            if len(feature_values) > 10:
 
-                right_indices = X[:, col_index] <= threshold
-                left_indices = ~right_indices
-                
-                if self.min_sample_spilt is not None:
-                    if len(right_indices) < self.min_sample_spilt or len(left_indices) < self.min_sample_spilt:
-                        continue
+                for threshold in statistics.quantiles(feature_values, n=10):
 
-                p = float(len(right_indices)) / len(y)
+                    right_indices = X[:, col_index] <= threshold
+                    left_indices = ~right_indices
+                    
+                    #如果分割後的節點樣本數小於min_sample_split
+                    #則呼略該取值
+                    if self.min_sample_spilt is not None:
+                        if len(right_indices) < self.min_sample_spilt or len(left_indices) < self.min_sample_spilt:
+                            continue
 
-                gain = currentscore - p * self._gini(y[right_indices]) - (1-p) * self._gini(y[left_indices])
+                    p = float(len(right_indices)) / len(y)
+
+                    #計算information gain
+                    gain = currentscore - p * self._gini(y[right_indices]) - (1-p) * self._gini(y[left_indices])
 
                 if gain > best_gain:
 
                     best_feature_index = col_index
                     best_threshold = threshold
 
-        return best_feature_index, best_threshold
 
+            else:
+                
+                for threshold in feature_values:
+                    
+                    #計算所有分割可能性的GINI係數
+                    right_indices = X[:, col_index] <= threshold
+                    left_indices = ~right_indices
+                    
+                    #如果分割後的節點樣本數小於min_sample_split
+                    #則呼略該取值
+                    if self.min_sample_spilt is not None:
+                        if len(right_indices) < self.min_sample_spilt or len(left_indices) < self.min_sample_spilt:
+                            continue
+
+                    p = float(len(right_indices)) / len(y)
+
+                    #計算information gain
+                    gain = currentscore - p * self._gini(y[right_indices]) - (1-p) * self._gini(y[left_indices])
+
+                    if gain > best_gain:
+
+                        best_feature_index = col_index
+                        best_threshold = threshold
+
+        return best_feature_index, best_threshold, best_gain
+    
+    def _compute_feature_importance(self, X, y):
+
+        _, n_features = np.shape(X)
+        feature_importance = np.zeros(n_features)
+
+        root_gini = self._gini(y)
+        for feature_index in range(n_features):
+            
+            feature_values = np.unique(X[:,feature_index])
+
+            if len(feature_values) > 10:
+
+                for threshold in statistics.quantiles(feature_values, n=10):
+                    
+                    right_indices = X[:, feature_index] <= threshold
+                    left_indices = ~right_indices                    
+
+                    p = float(len(right_indices)) / len(y)
+
+                    #計算information gain
+                    gain = root_gini - p * self._gini(y[right_indices]) - (1-p) * self._gini(y[left_indices])
+
+                    feature_importance[feature_index] += (root_gini - gain)
+
+
+            else:
+
+                for threshold in feature_values:
+
+                    right_indices = X[:,feature_index] <= threshold
+                    left_indices = ~right_indices
+
+                    p = float(len(right_indices)) / len(y)
+
+                    gain = root_gini - p * self._gini(y[right_indices]) - (1-p) * self._gini(y[left_indices])
+
+                    #print(root_gini - gain)
+
+                    feature_importance[feature_index] += (root_gini - gain)
+
+        return feature_importance
 
     def predict(self, X):
 
@@ -357,7 +466,7 @@ class DecisionTree(object):
     
     def _predict(self, x, node):
 
-        if node.value is not None:
+        if not node.value == None:
             return node.value
         
         if x[node.feature_index] <= node.threshold:
@@ -372,7 +481,9 @@ class DecisionTree(object):
 
         acc = np.sum(predictions == ytest) / len(ytest)
 
-        print(f"The Accuracy of Test Data : {acc : .2%}")
+        #print(f"The Accuracy of Test Data : {acc : .2%}")
+
+        return acc
 
     
  
